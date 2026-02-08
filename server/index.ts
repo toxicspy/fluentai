@@ -1,103 +1,237 @@
-import express, { type Request, Response, NextFunction } from "express";
+import "dotenv/config";
+import express from "express";
+import cors from "cors";
+import { createServer } from "http";
+import * as client from "openid-client";
+import { Strategy, type VerifyFunction } from "openid-client/passport";
+import passport from "passport";
+import session from "express-session";
+import type { Express, RequestHandler } from "express";
+import memoize from "memoizee";
+import connectPg from "connect-pg-simple";
+
+import { authStorage } from "./storage";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
-import { createServer } from "http";
 
 const app = express();
-const httpServer = createServer(app);
+const PORT = Number(process.env.PORT) || 5000;
 
-declare module "http" {
-  interface IncomingMessage {
-    rawBody: unknown;
-  }
+app.use(cors({ origin: true, credentials: true }));
+app.use(express.json());
+
+const IS_NODE_PROD = process.env.NODE_ENV === "production";
+const AUTH_ENABLED = IS_NODE_PROD &&
+  Boolean(process.env.SESSION_SECRET && process.env.REPL_ID && process.env.DATABASE_URL);
+
+function injectLocalUser(app: Express) {
+  if (AUTH_ENABLED) return;
+
+  app.use(async (req, _res, next) => {
+    req.user = {
+      id: "local-user",
+      email: "local@dev",
+      firstName: "Local",
+      lastName: "Developer",
+      expires_at: Math.floor(Date.now() / 1000) + 60 * 60,
+    } as any;
+
+    try {
+      await authStorage.upsertUser({
+        id: "local-user",
+        email: "local@dev",
+        firstName: "Local",
+        lastName: "Developer",
+        profileImageUrl: null,
+      });
+      next();
+    } catch (error) {
+      next(error);
+    }
+  });
 }
 
-app.use(
-  express.json({
-    verify: (req, _res, buf) => {
-      req.rawBody = buf;
-    },
-  }),
+injectLocalUser(app);
+
+const getOidcConfig = memoize(
+  async () => {
+    if (!AUTH_ENABLED) {
+      throw new Error("OIDC config requested outside production");
+    }
+
+    return await client.discovery(
+      new URL(process.env.ISSUER_URL ?? "https://replit.com/oidc"),
+      process.env.REPL_ID!
+    );
+  },
+  { maxAge: 3600 * 1000 }
 );
 
-app.use(express.urlencoded({ extended: false }));
+function getSession() {
+  if (!AUTH_ENABLED) {
+    throw new Error("Session should not be initialized in local dev");
+  }
 
-export function log(message: string, source = "express") {
-  const formattedTime = new Date().toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
+  const sessionTtl = 7 * 24 * 60 * 60 * 1000;
+  const PgStore = connectPg(session);
+
+  const sessionStore = new PgStore({
+    conString: process.env.DATABASE_URL,
+    createTableIfMissing: false,
+    ttl: sessionTtl,
+    tableName: "sessions",
   });
 
-  console.log(`${formattedTime} [${source}] ${message}`);
+  return session({
+    secret: process.env.SESSION_SECRET!,
+    store: sessionStore,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      secure: true,
+      maxAge: sessionTtl,
+    },
+  });
 }
 
-app.use((req, res, next) => {
-  const start = Date.now();
-  const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
+function updateUserSession(
+  user: any,
+  tokens: client.TokenEndpointResponse & client.TokenEndpointResponseHelpers
+) {
+  user.claims = tokens.claims();
+  user.access_token = tokens.access_token;
+  user.refresh_token = tokens.refresh_token;
+  user.expires_at = user.claims?.exp;
+}
 
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
+async function upsertUser(claims: any) {
+  await authStorage.upsertUser({
+    id: claims.sub,
+    email: claims.email,
+    firstName: claims.first_name,
+    lastName: claims.last_name,
+    profileImageUrl: claims.profile_image_url,
+  });
+}
+
+async function setupAuth(app: Express) {
+  if (!AUTH_ENABLED) return;
+
+  app.set("trust proxy", 1);
+  app.use(getSession());
+  app.use(passport.initialize());
+  app.use(passport.session());
+
+  const config = await getOidcConfig();
+
+  const verify: VerifyFunction = async (tokens, verified) => {
+    const user: any = {};
+    updateUserSession(user, tokens);
+    await upsertUser(tokens.claims());
+    verified(null, user);
   };
 
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-    if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
+  const registered = new Set<string>();
 
-      log(logLine);
-    }
+  const ensureStrategy = (domain: string) => {
+    const name = `replitauth:${domain}`;
+    if (registered.has(name)) return;
+
+    passport.use(
+      name,
+      new Strategy(
+        {
+          name,
+          config,
+          scope: "openid email profile offline_access",
+          callbackURL: `https://${domain}/api/callback`,
+        },
+        verify
+      )
+    );
+
+    registered.add(name);
+  };
+
+  passport.serializeUser((user, cb) => cb(null, user));
+  passport.deserializeUser((user, cb) => cb(null, user as Express.User));
+
+  app.get("/api/login", (req, res, next) => {
+    ensureStrategy(req.hostname);
+    passport.authenticate(`replitauth:${req.hostname}`)(req, res, next);
   });
 
-  next();
-});
+  app.get("/api/callback", (req, res, next) => {
+    ensureStrategy(req.hostname);
+    passport.authenticate(`replitauth:${req.hostname}`, {
+      successRedirect: "/",
+      failureRedirect: "/api/login",
+    })(req, res, next);
+  });
 
-(async () => {
+  app.get("/api/logout", (req, res) => {
+    req.logout(() => {
+      res.redirect(
+        client.buildEndSessionUrl(config, {
+          client_id: process.env.REPL_ID!,
+          post_logout_redirect_uri: `${req.protocol}://${req.hostname}`,
+        }).href
+      );
+    });
+  });
+}
+
+setupAuth(app);
+
+export const isAuthenticated: RequestHandler = async (req, res, next) => {
+  if (!AUTH_ENABLED) return next();
+
+  if (typeof req.isAuthenticated !== "function" || !req.isAuthenticated()) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  const user = req.user as any;
+  if (!user?.expires_at) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  if (Math.floor(Date.now() / 1000) < user.expires_at) {
+    return next();
+  }
+
+  if (!user.refresh_token) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  try {
+    const config = await getOidcConfig();
+    const refreshed = await client.refreshTokenGrant(config, user.refresh_token);
+    updateUserSession(user, refreshed);
+    return next();
+  } catch {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+};
+
+const httpServer = createServer(app);
+
+async function startServer() {
   await registerRoutes(httpServer, app);
 
-  app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
-
-    console.error("Internal Server Error:", err);
-
-    if (res.headersSent) {
-      return next(err);
-    }
-
-    return res.status(status).json({ message });
-  });
-
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
-  if (process.env.NODE_ENV === "production") {
+  if (IS_NODE_PROD) {
     serveStatic(app);
   } else {
     const { setupVite } = await import("./vite");
     await setupVite(httpServer, app);
   }
 
-  // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
-  const port = parseInt(process.env.PORT || "5000", 10);
-  httpServer.listen(
-    {
-      port,
-      host: "0.0.0.0",
-      reusePort: true,
-    },
-    () => {
-      log(`serving on port ${port}`);
-    },
-  );
-})();
+  httpServer.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+}
+
+startServer().catch((error) => {
+  console.error("Failed to start server:", error);
+  process.exit(1);
+});

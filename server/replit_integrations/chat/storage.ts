@@ -11,6 +11,10 @@ export interface IChatStorage {
   createMessage(conversationId: number, role: string, content: string): Promise<typeof messages.$inferSelect>;
 }
 
+const DEFAULT_USER_ID = "local-user";
+const DEFAULT_NATIVE_LANGUAGE = "English";
+const DEFAULT_TARGET_LANGUAGE = "Spanish";
+
 export const chatStorage: IChatStorage = {
   async getConversation(id: number) {
     const [conversation] = await db.select().from(conversations).where(eq(conversations.id, id));
@@ -22,7 +26,15 @@ export const chatStorage: IChatStorage = {
   },
 
   async createConversation(title: string) {
-    const [conversation] = await db.insert(conversations).values({ title }).returning();
+    const [conversation] = await db
+      .insert(conversations)
+      .values({
+        title,
+        userId: DEFAULT_USER_ID,
+        nativeLanguage: DEFAULT_NATIVE_LANGUAGE,
+        targetLanguage: DEFAULT_TARGET_LANGUAGE,
+      })
+      .returning();
     return conversation;
   },
 
@@ -36,8 +48,15 @@ export const chatStorage: IChatStorage = {
   },
 
   async createMessage(conversationId: number, role: string, content: string) {
-    const [message] = await db.insert(messages).values({ conversationId, role, content }).returning();
+    const [message] = await db
+      .insert(messages)
+      .values({
+        conversationId,
+        role,
+        nativeContent: content,
+        targetContent: content,
+      })
+      .returning();
     return message;
   },
 };
-

@@ -1,14 +1,15 @@
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarFooter } from "@/components/ui/sidebar"
-import { useAuth } from "@/hooks/use-auth";
 import { Link, useLocation } from "wouter";
-import { LogOut, LayoutDashboard, Plus, MessageSquare } from "lucide-react";
+import { LayoutDashboard, Plus, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useConversations } from "@/hooks/use-conversations";
+import { useState } from "react";
+import { CreateChatDialog } from "@/components/CreateChatDialog";
 
 export function AppSidebar() {
-  const { user, logout } = useAuth();
   const [location] = useLocation();
   const { data: conversations } = useConversations();
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
 
   return (
     <Sidebar>
@@ -27,11 +28,11 @@ export function AppSidebar() {
                 <Button 
                   className="w-full justify-center gap-2 shadow-lg shadow-primary/20 hover:shadow-primary/30 transition-all"
                   size="lg"
-                  asChild
+                  onClick={() => setIsCreateOpen(true)}
                 >
-                  <Link href="/">
+                  <span>
                     <Plus size={18} /> New Chat
-                  </Link>
+                  </span>
                 </Button>
               </SidebarMenuItem>
 
@@ -69,24 +70,17 @@ export function AppSidebar() {
       <SidebarFooter className="p-4 border-t border-slate-100 bg-slate-50/50">
         <div className="flex items-center gap-3 mb-4">
           <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-400 to-purple-400 flex items-center justify-center text-white font-bold text-sm shadow-md">
-            {user?.firstName?.[0]}{user?.lastName?.[0]}
+            GU
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold text-slate-900 truncate">
-              {user?.firstName} {user?.lastName}
+              Guest User
             </p>
-            <p className="text-xs text-slate-500 truncate">{user?.email}</p>
+            <p className="text-xs text-slate-500 truncate">No login required</p>
           </div>
         </div>
-        <Button 
-          variant="outline" 
-          className="w-full justify-start gap-2 text-slate-600 hover:text-red-600 hover:bg-red-50 hover:border-red-200 transition-colors"
-          onClick={() => logout()}
-        >
-          <LogOut size={16} />
-          Sign Out
-        </Button>
       </SidebarFooter>
+      <CreateChatDialog open={isCreateOpen} onOpenChange={setIsCreateOpen} />
     </Sidebar>
   );
 }

@@ -42,7 +42,7 @@ export const api = {
     create: {
       method: 'POST' as const,
       path: '/api/conversations',
-      input: insertConversationSchema,
+      input: insertConversationSchema.omit({ userId: true }),
       responses: {
         201: z.custom<typeof conversations.$inferSelect>(),
         400: errorSchemas.validation,

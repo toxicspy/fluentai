@@ -8,8 +8,19 @@ import memoize from "memoizee";
 import connectPg from "connect-pg-simple";
 import { authStorage } from "./storage";
 
+const AUTH_ENABLED = process.env.NODE_ENV === "production" &&
+  Boolean(process.env.SESSION_SECRET && process.env.REPL_ID && process.env.DATABASE_URL);
+
+if (!AUTH_ENABLED) {
+  console.warn("Replit auth disabled (missing production auth env or not in production mode)");
+}
+
 const getOidcConfig = memoize(
   async () => {
+    if (!AUTH_ENABLED) {
+      throw new Error("OIDC config requested outside production");
+    }
+
     return await client.discovery(
       new URL(process.env.ISSUER_URL ?? "https://replit.com/oidc"),
       process.env.REPL_ID!
@@ -19,14 +30,20 @@ const getOidcConfig = memoize(
 );
 
 export function getSession() {
-  const sessionTtl = 7 * 24 * 60 * 60 * 1000; // 1 week
+  if (!AUTH_ENABLED) {
+    throw new Error("Session should not be initialized in local dev");
+  }
+
+  const sessionTtl = 7 * 24 * 60 * 60 * 1000;
   const pgStore = connectPg(session);
+
   const sessionStore = new pgStore({
     conString: process.env.DATABASE_URL,
     createTableIfMissing: false,
     ttl: sessionTtl,
     tableName: "sessions",
   });
+
   return session({
     secret: process.env.SESSION_SECRET!,
     store: sessionStore,
@@ -61,6 +78,10 @@ async function upsertUser(claims: any) {
 }
 
 export async function setupAuth(app: Express) {
+  if (!AUTH_ENABLED) {
+    return;
+  }
+
   app.set("trust proxy", 1);
   app.use(getSession());
   app.use(passport.initialize());
@@ -78,12 +99,11 @@ export async function setupAuth(app: Express) {
     verified(null, user);
   };
 
-  // Keep track of registered strategies
   const registeredStrategies = new Set<string>();
 
-  // Helper function to ensure strategy exists for a domain
   const ensureStrategy = (domain: string) => {
     const strategyName = `replitauth:${domain}`;
+
     if (!registeredStrategies.has(strategyName)) {
       const strategy = new Strategy(
         {
@@ -94,6 +114,7 @@ export async function setupAuth(app: Express) {
         },
         verify
       );
+
       passport.use(strategy);
       registeredStrategies.add(strategyName);
     }
@@ -130,11 +151,18 @@ export async function setupAuth(app: Express) {
   });
 }
 
-export const isAuthenticated: RequestHandler = async (req, res, next) => {
-  const user = req.user as any;
+export const isAuthenticated: RequestHandler = async (req, _res, next) => {
+  if (!AUTH_ENABLED) {
+    return next();
+  }
 
-  if (!req.isAuthenticated() || !user.expires_at) {
-    return res.status(401).json({ message: "Unauthorized" });
+  if (typeof req.isAuthenticated !== "function" || !req.isAuthenticated()) {
+    return _res.status(401).json({ message: "Unauthorized" });
+  }
+
+  const user = req.user as any;
+  if (!user?.expires_at) {
+    return _res.status(401).json({ message: "Unauthorized" });
   }
 
   const now = Math.floor(Date.now() / 1000);
@@ -144,8 +172,7 @@ export const isAuthenticated: RequestHandler = async (req, res, next) => {
 
   const refreshToken = user.refresh_token;
   if (!refreshToken) {
-    res.status(401).json({ message: "Unauthorized" });
-    return;
+    return _res.status(401).json({ message: "Unauthorized" });
   }
 
   try {
@@ -153,8 +180,7 @@ export const isAuthenticated: RequestHandler = async (req, res, next) => {
     const tokenResponse = await client.refreshTokenGrant(config, refreshToken);
     updateUserSession(user, tokenResponse);
     return next();
-  } catch (error) {
-    res.status(401).json({ message: "Unauthorized" });
-    return;
+  } catch {
+    return _res.status(401).json({ message: "Unauthorized" });
   }
 };
