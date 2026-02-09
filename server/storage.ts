@@ -6,7 +6,7 @@ import {
   type InsertConversation,
   type Message,
   type InsertMessage,
-} from "@shared/schema";
+} from "../shared/schema";
 import { db } from "./db";
 import { eq, desc } from "drizzle-orm";
 
