@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import { createServer } from "http";
-import { registerRoutes } from "../server/routes";
+import { registerRoutes } from "../server/routes.js";
 
 let appInstance: express.Express | null = null;
 let appInitPromise: Promise<express.Express> | null = null;

@@ -2,7 +2,7 @@ import { pgTable, serial, text, timestamp, varchar, integer } from "drizzle-orm/
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
-import { users } from "./auth";
+import { users } from "./auth.js";
 
 export const conversations = pgTable("conversations", {
   id: serial("id").primaryKey(),

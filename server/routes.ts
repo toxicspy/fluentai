@@ -1,8 +1,8 @@
 // server/routes.ts
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { storage, authStorage } from "./storage";
-import { api } from "../shared/routes";
+import { storage, authStorage } from "./storage.js";
+import { api } from "../shared/routes.js";
 import { z } from "zod";
 import OpenAI from "openai";
 

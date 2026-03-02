@@ -7,10 +7,18 @@ export default function LandingPage() {
 
   const handleStartChat = async () => {
     try {
+      const browserLanguage = navigator.language?.toLowerCase().startsWith("es")
+        ? "Spanish"
+        : "English";
+
       const res = await fetch("/api/conversations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: "New Chat" }),
+        body: JSON.stringify({
+          title: "New Chat",
+          nativeLanguage: browserLanguage,
+          targetLanguage: "Spanish",
+        }),
       });
 
       if (!res.ok) throw new Error("Failed to create conversation");
@@ -61,7 +69,7 @@ export default function LandingPage() {
             onClick={handleStartChat}
             className="h-14 px-10 rounded-full text-lg shadow-xl"
           >
-            Let’s Chat
+            Let's Chat
             <ArrowRight className="ml-2 h-5 w-5" />
           </Button>
         </div>
@@ -110,3 +118,4 @@ function FeatureCard({
     </div>
   );
 }
+

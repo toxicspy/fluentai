@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { insertConversationSchema, conversations, messages } from './schema';
+import { insertConversationSchema, conversations, messages } from './schema.js';
 
 export const errorSchemas = {
   validation: z.object({
