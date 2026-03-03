@@ -6,9 +6,16 @@ import { api } from "../shared/routes.js";
 import { z } from "zod";
 import OpenAI from "openai";
 
+const OPENAI_API_KEY =
+  process.env.AI_INTEGRATIONS_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY;
+const OPENAI_BASE_URL =
+  process.env.AI_INTEGRATIONS_OPENAI_BASE_URL ??
+  process.env.OPENAI_BASE_URL ??
+  "https://api.openai.com/v1";
+
 const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+  apiKey: OPENAI_API_KEY,
+  baseURL: OPENAI_BASE_URL,
 });
 
 const GUEST_USER_ID = "guest-user";
