@@ -9,6 +9,9 @@ import { useState, useRef, useEffect } from "react";
 import { Link } from "wouter";
 import type { Message } from "@shared/routes";
 
+const AI_FRIEND_NAME_KEY = "aiFriendName";
+const AI_FRIEND_PHOTO_KEY = "aiFriendPhoto";
+
 export default function ChatPage() {
   const params = useParams<{ id?: string }>();
 
@@ -18,6 +21,8 @@ export default function ChatPage() {
   const sendMessage = useSendMessage();
 
   const [input, setInput] = useState("");
+  const [friendName, setFriendName] = useState<string>("AI Friend");
+  const [friendPhoto, setFriendPhoto] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -27,6 +32,19 @@ export default function ChatPage() {
   useEffect(() => {
     scrollToBottom();
   }, [data?.messages, sendMessage.isPending]);
+
+  useEffect(() => {
+    const storedName = localStorage.getItem(AI_FRIEND_NAME_KEY);
+    const storedPhoto = localStorage.getItem(AI_FRIEND_PHOTO_KEY);
+
+    if (storedName?.trim()) {
+      setFriendName(storedName.trim());
+    }
+
+    if (storedPhoto) {
+      setFriendPhoto(storedPhoto);
+    }
+  }, []);
 
   const handleSend = () => {
     if (!input.trim() || sendMessage.isPending || typeof id !== "number") return;
@@ -87,9 +105,17 @@ export default function ChatPage() {
             </Button>
           </Link>
 
-          <div>
-            <h2 className="text-lg font-bold">{conversation?.title ?? "New Chat"}</h2>
-            <p className="text-xs text-slate-500">Active Session</p>
+          <div className="h-11 w-11 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center text-sm font-semibold text-slate-700">
+            {friendPhoto ? (
+              <img src={friendPhoto} alt={friendName} className="h-full w-full object-cover" />
+            ) : (
+              friendName.charAt(0).toUpperCase()
+            )}
+          </div>
+
+          <div className="min-w-0">
+            <h2 className="text-lg font-bold truncate">{friendName || conversation?.title || "New Chat"}</h2>
+            <p className="text-xs text-slate-500">Your AI Friend is online</p>
           </div>
         </header>
 
